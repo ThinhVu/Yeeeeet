@@ -19,6 +19,7 @@ import com.koushikdutta.async.http.AsyncHttpGet;
 import com.koushikdutta.async.http.AsyncHttpResponse;
 import com.koushikdutta.ion.Ion;
 import com.sfbl.javaext.asyncAwait.Async;
+import com.sfbl.javaext.utils.Strings;
 
 import java.io.File;
 import java.util.concurrent.ExecutionException;
@@ -98,12 +99,13 @@ public class MainActivity extends AppCompatActivity {
   }
 
   private void parseContent(String content) {
-    if (null == content) {
+    if (null == content || Strings.eq(content, "{}")) {
       runOnUiThread(() -> {
         Toast
             .makeText(this.getApplicationContext(), "Failed to load metadata!", Toast.LENGTH_LONG)
             .show();
       });
+      this.finishAndRemoveTask();
     }
 
     JsonObject obj = new Gson().fromJson(content, JsonObject.class);
