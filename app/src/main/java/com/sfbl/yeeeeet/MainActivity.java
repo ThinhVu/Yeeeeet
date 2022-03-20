@@ -7,6 +7,7 @@ import android.os.StrictMode;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -97,7 +98,24 @@ public class MainActivity extends AppCompatActivity {
   }
 
   private void parseContent(String content) {
+    if (null == content) {
+      runOnUiThread(() -> {
+        Toast
+            .makeText(this.getApplicationContext(), "Failed to load metadata!", Toast.LENGTH_LONG)
+            .show();
+      });
+    }
+
     JsonObject obj = new Gson().fromJson(content, JsonObject.class);
+
+    try {
+      String status = obj.get("status").getAsString();
+      if (status.equals("fail")) {
+        runOnUiThread(() -> Toast.makeText(this.getApplicationContext(), "Proxy server has been blocked by Instagram. Try another server!", Toast.LENGTH_LONG).show());
+        return;
+      }
+    } catch (Exception ignored) {}
+
     JsonArray images = obj.get("items").getAsJsonArray();
     for (int i = 0; i < images.size(); ++i) {
       JsonObject item = images.get(i).getAsJsonObject();
@@ -119,11 +137,28 @@ public class MainActivity extends AppCompatActivity {
   }
 
   private void downloadMedia(JsonObject item) {
+
     String id = item.get("id").getAsString();
+    try {
+      // prefer video version than image
+      JsonArray video_versions = item.getAsJsonArray("video_versions");
+      if (video_versions != null && video_versions.size() > 0) {
+        JsonObject video_version = video_versions.get(0).getAsJsonObject();
+        String videoUrl = video_version.get("url").getAsString();
+        String saveTo = storePath + id + ".mp4";
+        downloadMediaFile(videoUrl, saveTo);
+        return;
+      }
+    } catch (Exception e) {
+      Log.e(TAG, "downloadMedia: ", e);
+    }
+
+
     JsonObject image_versions2 = item.getAsJsonObject("image_versions2");
     int original_width = item.get("original_width").getAsInt();
     int original_height = item.get("original_height").getAsInt();
     JsonArray candidates = image_versions2.getAsJsonArray("candidates");
+
 
     for (int x = 0; x < candidates.size(); ++x) {
       JsonObject candidate = candidates.get(x).getAsJsonObject();
@@ -131,7 +166,7 @@ public class MainActivity extends AppCompatActivity {
         String url = candidate.get("url").getAsString();
         String saveTo = storePath + id + ".jpg";
         try {
-          downloadImage(url, saveTo);
+          downloadMediaFile(url, saveTo);
         } catch (Exception e) {
           Log.e(TAG, "parseContent: ", e);
         }
@@ -141,17 +176,15 @@ public class MainActivity extends AppCompatActivity {
   }
 
   private String loadMetadata(String metadataUrl) throws ExecutionException, InterruptedException {
-    Log.d(TAG, "loadMetadata...");
+    Log.d(TAG, "loadMetadata");
     return Async.await(resolve -> {
           AsyncHttpGet get = new AsyncHttpGet(metadataUrl);
           AsyncHttpClient.getDefaultInstance().executeString(get, new AsyncHttpClient.StringCallback() {
             @Override
             public void onCompleted(Exception e, AsyncHttpResponse source, String result) {
               if (e != null) {
-                Log.e(TAG, "loadMetadata: ", e);
                 resolve.$(null);
               } else {
-                Log.d(TAG, "loadMetadata: " + result);
                 resolve.$(result);
               }
             }
@@ -160,9 +193,9 @@ public class MainActivity extends AppCompatActivity {
     );
   }
 
-  private void downloadImage(String imageUrl, String saveTo) {
+  private void downloadMediaFile(String imageUrl, String saveTo) {
     try {
-      Log.d(TAG, "downloadImage: " + imageUrl + " then save to " + saveTo);
+      Log.d(TAG, "downloadMediaFile: " + imageUrl + " then save to " + saveTo);
       Ion.with(getApplicationContext())
           .load(imageUrl)
           .setTimeout(1000000)
@@ -175,7 +208,7 @@ public class MainActivity extends AppCompatActivity {
             }
           });
     } catch (Exception e) {
-      Log.e(TAG, "downloadImage: ", e);
+      Log.e(TAG, "downloadMediaFile: ", e);
     }
   }
 }
