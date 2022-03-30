@@ -1,30 +1,19 @@
 package com.sfbl.yeeeeet;
 
+import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.os.StrictMode;
-import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AppCompatActivity;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-import com.koushikdutta.async.http.AsyncHttpClient;
-import com.koushikdutta.async.http.AsyncHttpGet;
-import com.koushikdutta.async.http.AsyncHttpResponse;
-import com.koushikdutta.ion.Ion;
-import com.sfbl.javaext.asyncAwait.Async;
-import com.sfbl.javaext.utils.Strings;
-
-import java.io.File;
-import java.util.concurrent.ExecutionException;
-
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity {
   private final String TAG = "Main";
 
   String proxyServer;
@@ -45,9 +34,10 @@ public class MainActivity extends AppCompatActivity {
     StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
     StrictMode.setThreadPolicy(policy);
 
-    Ion.getDefault(this).getConscryptMiddleware().enable(false);
+    // Ion.getDefault(this).getConscryptMiddleware().enable(false);
 
     SharedPreferences sharedPreferences = this.getSharedPreferences("storage", MODE_PRIVATE);
+    SharedPreferences.Editor editor = sharedPreferences.edit();
     proxyServer = sharedPreferences.getString("proxy", "https://media.outstagram.xyz");
     storePath = sharedPreferences.getString("store-path", "/storage/emulated/0/Pictures/Instagram/");
 
@@ -57,9 +47,7 @@ public class MainActivity extends AppCompatActivity {
     btnSetProxyServer = findViewById(R.id.btnSetProxy);
     btnSetProxyServer.setOnClickListener(v -> {
       proxyServer = edtProxyServer.getText().toString();
-      SharedPreferences.Editor editor = sharedPreferences.edit();
       editor.putString("proxy", proxyServer);
-      editor.commit();
       editor.apply();
     });
 
@@ -69,9 +57,7 @@ public class MainActivity extends AppCompatActivity {
     btnStorePath = findViewById(R.id.btnSetStorePath);
     btnStorePath.setOnClickListener(v -> {
       storePath = edtStorePath.getText().toString();
-      SharedPreferences.Editor editor = sharedPreferences.edit();
       editor.putString("store-path", storePath);
-      editor.commit();
       editor.apply();
     });
 
@@ -92,125 +78,84 @@ public class MainActivity extends AppCompatActivity {
       // https://www.instagram.com/p/CbSrMPmp_lQ/?utm_medium=share_sheet
       String shareUrl = intent.getStringExtra(Intent.EXTRA_TEXT);
       String mediaUrl = proxyServer + "/v1?url=" + shareUrl.replace("/?utm_medium=share_sheet", "") + "?__a=1";
-      parseContent(loadMetadata(mediaUrl));
+      Fetch.getAsync(mediaUrl, this::parseContent);
     } catch (Exception e) {
-      Log.e(TAG, "handleSendText: ", e);
+      e.printStackTrace();
     }
   }
 
   private void parseContent(String content) {
-    if (null == content || Strings.eq(content, "{}")) {
-      runOnUiThread(() -> {
-        Toast
-            .makeText(this.getApplicationContext(), "Failed to load metadata!", Toast.LENGTH_LONG)
-            .show();
-      });
-      this.finishAndRemoveTask();
-    }
-
-    JsonObject obj = new Gson().fromJson(content, JsonObject.class);
-
     try {
-      String status = obj.get("status").getAsString();
-      if (status.equals("fail")) {
-        runOnUiThread(() -> Toast.makeText(this.getApplicationContext(), "Proxy server has been blocked by Instagram. Try another server!", Toast.LENGTH_LONG).show());
+      if (null == content || content.equals("{}")) {
+        runOnUiThread(() -> {
+          Toast
+              .makeText(this.getApplicationContext(), "Failed to load metadata!", Toast.LENGTH_LONG)
+              .show();
+        });
+        this.finishAndRemoveTask();
+      }
+
+      JSONObject obj = new JSONObject(content);
+
+      try {
+        String status = obj.getString("status");
+        if (status.equals("fail")) {
+          runOnUiThread(() -> Toast.makeText(this.getApplicationContext(), "Proxy server has been blocked by Instagram. Try another server!", Toast.LENGTH_LONG).show());
+          return;
+        }
+      } catch (Exception ignored) {}
+
+      JSONArray images = obj.getJSONArray("items");
+      for (int i = 0; i < images.length(); ++i) {
+        JSONObject item = images.getJSONObject(i);
+        int carousel_media_count = 0;
+        try {
+          carousel_media_count = item.getInt("carousel_media_count");
+        } catch (Exception ignored) {
+        }
+        if (carousel_media_count > 0) {
+          JSONArray carousel_media = item.getJSONArray("carousel_media");
+          for (int x = 0; x < carousel_media.length(); ++x) {
+            downloadMedia(carousel_media.getJSONObject(x));
+          }
+        } else {
+          downloadMedia(item);
+        }
+        this.finishAndRemoveTask();
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+  }
+
+  private void downloadMedia(JSONObject item) throws JSONException {
+
+    String id = item.getString("id");
+    try {
+      JSONArray video_versions = item.getJSONArray("video_versions");
+      if (video_versions != null && video_versions.length() > 0) {
+        JSONObject video_version = video_versions.getJSONObject(0);
+        Fetch.download(video_version.getString("url"), storePath + id + ".mp4");
         return;
       }
     } catch (Exception ignored) {}
 
-    JsonArray images = obj.get("items").getAsJsonArray();
-    for (int i = 0; i < images.size(); ++i) {
-      JsonObject item = images.get(i).getAsJsonObject();
-      int carousel_media_count = 0;
-      try {
-        carousel_media_count = item.get("carousel_media_count").getAsInt();
-      } catch (Exception ignored) {
-      }
-      if (carousel_media_count > 0) {
-        JsonArray carousel_media = item.getAsJsonArray("carousel_media");
-        for (int x = 0; x < carousel_media.size(); ++x) {
-          downloadMedia(carousel_media.get(x).getAsJsonObject());
-        }
-      } else {
-        downloadMedia(item);
-      }
-      this.finishAndRemoveTask();
-    }
-  }
 
-  private void downloadMedia(JsonObject item) {
+    JSONObject image_versions2 = item.getJSONObject("image_versions2");
+    int original_width = item.getInt("original_width");
+    int original_height = item.getInt("original_height");
+    JSONArray candidates = image_versions2.getJSONArray("candidates");
 
-    String id = item.get("id").getAsString();
-    try {
-      // prefer video version than image
-      JsonArray video_versions = item.getAsJsonArray("video_versions");
-      if (video_versions != null && video_versions.size() > 0) {
-        JsonObject video_version = video_versions.get(0).getAsJsonObject();
-        String videoUrl = video_version.get("url").getAsString();
-        String saveTo = storePath + id + ".mp4";
-        downloadMediaFile(videoUrl, saveTo);
-        return;
-      }
-    } catch (Exception e) {
-      Log.e(TAG, "downloadMedia: ", e);
-    }
-
-
-    JsonObject image_versions2 = item.getAsJsonObject("image_versions2");
-    int original_width = item.get("original_width").getAsInt();
-    int original_height = item.get("original_height").getAsInt();
-    JsonArray candidates = image_versions2.getAsJsonArray("candidates");
-
-
-    for (int x = 0; x < candidates.size(); ++x) {
-      JsonObject candidate = candidates.get(x).getAsJsonObject();
-      if (candidate.get("width").getAsInt() == original_width && candidate.get("height").getAsInt() == original_height) {
-        String url = candidate.get("url").getAsString();
-        String saveTo = storePath + id + ".jpg";
+    for (int x = 0; x < candidates.length(); ++x) {
+      JSONObject candidate = candidates.getJSONObject(x);
+      if (candidate.getInt("width") == original_width && candidate.getInt("height") == original_height) {
         try {
-          downloadMediaFile(url, saveTo);
+          Fetch.download(candidate.getString("url"), storePath + id + ".jpg");
         } catch (Exception e) {
-          Log.e(TAG, "parseContent: ", e);
+          e.printStackTrace();
         }
         return;
       }
-    }
-  }
-
-  private String loadMetadata(String metadataUrl) throws ExecutionException, InterruptedException {
-    Log.d(TAG, "loadMetadata");
-    return Async.await(resolve -> {
-          AsyncHttpGet get = new AsyncHttpGet(metadataUrl);
-          AsyncHttpClient.getDefaultInstance().executeString(get, new AsyncHttpClient.StringCallback() {
-            @Override
-            public void onCompleted(Exception e, AsyncHttpResponse source, String result) {
-              if (e != null) {
-                resolve.$(null);
-              } else {
-                resolve.$(result);
-              }
-            }
-          });
-        }
-    );
-  }
-
-  private void downloadMediaFile(String imageUrl, String saveTo) {
-    try {
-      Log.d(TAG, "downloadMediaFile: " + imageUrl + " then save to " + saveTo);
-      Ion.with(getApplicationContext())
-          .load(imageUrl)
-          .setTimeout(1000000)
-          .write(new File(saveTo))
-          .setCallback((e, file) -> {
-            if (e != null) {
-              Log.e(TAG, "DOWNLOAD_FILE:", e);
-            } else {
-              Log.d(TAG, "DOWNLOAD_FILE: Completed");
-            }
-          });
-    } catch (Exception e) {
-      Log.e(TAG, "downloadMediaFile: ", e);
     }
   }
 }
